@@ -320,3 +320,34 @@ def main():
 if __name__ == '__main__':
 
     main()
+
+from telegram import Update
+from telegram.ext import CallbackContext, CommandHandler
+
+def setfilter(update: Update, context: CallbackContext):
+    chat_id = str(update.effective_chat.id)
+    if not context.args:
+        update.message.reply_text("Usage: /setfilter <text to match in event description>")
+        return
+    keyword = " ".join(context.args).strip()
+    data = load_store()
+    filters = data.get("filters", {})
+    filters[chat_id] = keyword
+    data["filters"] = filters
+    save_store(data)
+    update.message.reply_text(f"Filter set to: \"{keyword}\" — only reminders with this text in the event description will be sent.")
+
+def clearfilter(update: Update, context: CallbackContext):
+    chat_id = str(update.effective_chat.id)
+    data = load_store()
+    filters = data.get("filters", {})
+    if chat_id in filters:
+        del filters[chat_id]
+        data["filters"] = filters
+        save_store(data)
+        update.message.reply_text("Filter cleared. All reminders will be sent as before.")
+    else:
+        update.message.reply_text("No filter set for this chat.")
+
+dispatcher.add_handler(CommandHandler("setfilter", setfilter))
+dispatcher.add_handler(CommandHandler("clearfilter", clearfilter))
