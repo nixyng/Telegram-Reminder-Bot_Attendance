@@ -1,3 +1,39 @@
+#adding JSON helpers
+# near top of bot.py
+import json, os
+
+REMINDER_FILE = "reminder.json"
+
+def load_store(path=REMINDER_FILE):
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
+
+def save_store(data, path=REMINDER_FILE):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+#end of adding JSON helpers
+import json, os
+
+REMINDER_FILE = "reminder.json"
+
+def load_store(path=REMINDER_FILE):
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
+
+def save_store(data, path=REMINDER_FILE):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
 import logging
 import telegramcalendar
 from datetime import datetime, timedelta
@@ -282,4 +318,5 @@ def main():
 
 
 if __name__ == '__main__':
+
     main()
