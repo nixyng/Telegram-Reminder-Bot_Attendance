@@ -374,3 +374,10 @@ def clearfilter(update: Update, context: CallbackContext):
 dispatcher.add_handler(CommandHandler("setfilter", setfilter))
 dispatcher.add_handler(CommandHandler("clearfilter", clearfilter))
 
+
+import os
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+# then pass TOKEN when creating the Updater
+
+export TELEGRAM_TOKEN="123456:ABC..."
+python bot.py
