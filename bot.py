@@ -1,355 +1,258 @@
-#adding JSON helpers
-# near top of bot.py
-import json, os
-
-REMINDER_FILE = "reminder.json"
-
-def load_store(path=REMINDER_FILE):
-    if not os.path.exists(path):
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return {}
-
-def save_store(data, path=REMINDER_FILE):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-#end of adding JSON helpers
-import json, os
-
-REMINDER_FILE = "reminder.json"
-
-def load_store(path=REMINDER_FILE):
-    if not os.path.exists(path):
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return {}
-
-def save_store(data, path=REMINDER_FILE):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-import logging
-import telegramcalendar
-from datetime import datetime, timedelta
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackQueryHandler
+# bot.py
+import os
 import json
 import random
+import logging
+from datetime import datetime, timedelta
+
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram.ext import (
+    Updater, CommandHandler, MessageHandler, Filters,
+    ConversationHandler, CallbackQueryHandler, CallbackContext
+)
+import telegramcalendar
+
+# ---------------------- Logging ----------------------
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
-
 logger = logging.getLogger(__name__)
 
+# ---------------------- Constants ----------------------
+REMINDER_FILE = "reminder.json"
 NAME, DATE_Q, TIME_Q, INFO, OPT = range(5)
-UTC_1, UTC_2 = range(2)
+UTC_1 = 0
 
+# ---------------------- JSON Helpers ----------------------
+def load_store(path=REMINDER_FILE):
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
 
+def save_store(data, path=REMINDER_FILE):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# ---------------------- Reminder JSON Utilities ----------------------
 def json_editor(user, key, value):
     user = str(user)
-    with open("reminder.json", "r+") as file:
-        content = json.load(file)
-        if user not in content["reminder"].keys():
-            content["reminder"][user] = {"utc": 0, "reminder": []}
-        if key == "name":
-            content["reminder"][user]["reminder"].insert(0, {})
-        content["reminder"][user]["reminder"][0][key] = value
-        file.seek(0)
-        json.dump(content, file)
-        file.truncate()
+    data = load_store()
+    if "reminder" not in data:
+        data["reminder"] = {}
+    if user not in data["reminder"]:
+        data["reminder"][user] = {"utc": 0, "reminder": []}
+    if key == "name":
+        data["reminder"][user]["reminder"].insert(0, {})
+    data["reminder"][user]["reminder"][0][key] = value
+    save_store(data)
 
-
-def json_getter(user, ):
-    with open("reminder.json") as file:
-        content = json.load(file)
-        element = content["reminder"][user]["reminder"][0]
-        name = element["name"]
-        date = element["date"]
-        _time = element["time"]
-        r_id = element["id"]
-        return name, date, _time, r_id
-
+def json_getter(user):
+    user = str(user)
+    data = load_store()
+    if user not in data.get("reminder", {}) or not data["reminder"][user]["reminder"]:
+        return None
+    element = data["reminder"][user]["reminder"][0]
+    name = element.get("name")
+    date = element.get("date")
+    _time = element.get("time")
+    r_id = element.get("id")
+    opt_inf = element.get("opt_inf")
+    return name, date, _time, r_id, opt_inf
 
 def json_deleter(user, r_id=None, current=False):
-    with open("reminder.json", "r+") as file:
-        content = json.load(file)
-        reminder = content["reminder"][user]["reminder"]
-        if not current:
-            for i in range(len(reminder)):
-                if reminder[i]["id"] == r_id:
-                    del reminder[i]
-                    break
-        else:
-            del reminder[0]
-        file.seek(0)
-        json.dump(content, file)
-        file.truncate()
-
+    user = str(user)
+    data = load_store()
+    if user not in data.get("reminder", {}):
+        return
+    reminder_list = data["reminder"][user]["reminder"]
+    if current:
+        if reminder_list:
+            reminder_list.pop(0)
+    elif r_id is not None:
+        data["reminder"][user]["reminder"] = [r for r in reminder_list if r.get("id") != r_id]
+    save_store(data)
 
 def json_utc(user, utc=None):
-    with open("reminder.json", "r+") as file:
-        content = json.load(file)
-        if utc is None:
-            return content["reminder"][user]["utc"]
-        else:
-            content["reminder"][user]["utc"] = utc
-            file.seek(0)
-            json.dump(content, file)
-            file.truncate()
+    user = str(user)
+    data = load_store()
+    if user not in data.get("reminder", {}):
+        data.setdefault("reminder", {})[user] = {"utc": 0, "reminder": []}
+    if utc is None:
+        return data["reminder"][user].get("utc", 0)
+    else:
+        data["reminder"][user]["utc"] = utc
+        save_store(data)
 
-
-def all_reminder(update, context):
-    reply_keyboard = [["/start", "/list", "/time"]]
-    username = str(update.message["chat"]["id"])
-    with open("reminder.json") as file:
-        content = json.load(file)
-        reminder = content["reminder"][username]["reminder"]
-        if len(reminder) == 0:
-            update.message.reply_text(f"\U0001F4C3 *Reminder List* \U0001F4C3\n\nYou don't have any reminders saved!", reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True), parse_mode="markdown")
-        else:
-            update.message.reply_text("\U0001F4CB* Reminder List *\U0001F4CB", parse_mode="markdown")
-            for i, v in enumerate(reminder):
-                name = v["name"]
-                date = v["date"]
-                _time = v["time"]
-                if "opt_inf" in v.keys():
-                    information = v["opt_inf"]
-                    if i == len(reminder) - 1:
-                        update.message.reply_text(f"{i+1}:   Appointment: {name}\n      Date: {date}\n      Time: {_time}\n      Information: {information}", reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
-                    else:
-                        update.message.reply_text(f"{i+1}:   Appointment: {name}\n      Date: {date}\n      Time: {_time}\n      Information: {information}")
-                else:
-                    if i == len(reminder) - 1:
-                        update.message.reply_text(f"{i+1}:   Appointment: {name}\n      Date: {date}\n      Time: {_time}", reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
-                    else:
-                        update.message.reply_text(f"{i+1}:   Appointment: {name}\n      Date: {date}\n      Time: {_time}")
-
-
-def utc_time(update, context):
-    update.message.reply_text("Choose the timezone you live in!", reply_markup=telegramcalendar.create_timezone())
-    return UTC_1
-
-
-def utc_time_selector(update, context):
-    reply_keyboard = [["/start", "/list", "/time"]]
-    selected, num = telegramcalendar.process_utc_selection(context.bot, update)
-    if selected:
-        chat_id = str(update.callback_query.from_user.id)
-        json_utc(chat_id, utc=num)
-        context.bot.send_message(chat_id=update.callback_query.from_user.id,
-                        text=f"You selected UTC + {num}" if num >= 0 else f"You selected UTC - {abs(num)}",
-                        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
-        return ConversationHandler.END
-
-#adding a pass filter
+# ---------------------- Reminder Filter ----------------------
 def passes_filter(reminder_obj: dict, chat_id: int) -> bool:
-    """Return True if the reminder should be sent for chat_id given stored filter."""
     data = load_store()
     filters = data.get("filters", {})
     keyword = filters.get(str(chat_id))
     if not keyword:
-        return True  # no filter set -> allow
-    # description may be stored under different keys depending on event source
-    description = reminder_obj.get("description") or reminder_obj.get("notes") or reminder_obj.get("details") or ""
+        return True
+    description = reminder_obj.get("description", "")
     return keyword.lower() in description.lower()
 
-# pseudocode where the bot currently sends reminders
-chat_id = str(job.context[0])  # whichever chat id you use
-reminder = "ATTENDANCE: Required" # event/reminder object
-
-if not passes_filter(reminder, chat_id):
-    # optionally log: print("Skipping reminder because filter not matched")
-    continue
-
-# existing send code
-context.bot.send_message(chat_id=chat_id, text="Reminder to take attendance on Elentra")
-
-def notification(context):
-    reply_keyboard = [["/start", "/list", "/time"]]
+# ---------------------- Reminder Notification ----------------------
+def notification(context: CallbackContext):
     job = context.job
-    if len(job.context) == 6:
-         name, date, _time, username, r_id = job.context[1], job.context[2], job.context[3], job.context[4], job.context[5]
-         context.bot.send_message(job.context[0], text=f"\U0001F4A1* Reminder *\U0001F4A1\n\nAppointment: {name}\nScheduled for {date} - {_time}.\nThe appointment starts in 10 minutes!", parse_mode="markdown")
-    else:
-        name, date, _time, username, r_id, information = job.context[1], job.context[2], job.context[3], job.context[4], job.context[5], job.context[6]
-        context.bot.send_message(job.context[0], text=f"\U0001F4A1* Reminder *\U0001F4A1\n\nAppointment: {name}\nInformation: {information}\n\nScheduled for {date} - {_time}.\nThe appointment starts in 10 minutes!", parse_mode="markdown", reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
+    chat_id = str(job.context[0])
+    name, date, _time, username, r_id, *rest = job.context[1:]
+    information = rest[0] if rest else None
+
+    reminder_obj = {"description": information or name}
+    if not passes_filter(reminder_obj, chat_id):
+        logger.info(f"Skipping reminder for chat {chat_id} due to filter")
+        json_deleter(username, r_id=r_id)
+        return
+
+    message_text = f"\U0001F4A1 *Reminder*\U0001F4A1\n\nAppointment: {name}"
+    if information:
+        message_text += f"\nInformation: {information}"
+    message_text += f"\nScheduled for {date} - {_time}\nYour appointment is in 30 minutes!"
+
+    reply_keyboard = [["/start", "/list", "/time"]]
+    context.bot.send_message(chat_id=chat_id, text=message_text, parse_mode="markdown",
+                             reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
     json_deleter(username, r_id=r_id)
 
-
-def start(update, context):
-    # print(update.message)
-    update.message.reply_text("*\U0001F4CD Reminder Setup *\U0001F4CD\n\nWhat should be the name\nof the appointment?", parse_mode="markdown")
-    # update.message.reply_text(f"test", reply_markup=telegramcalendar.create_clock(), parse_mode="markdown")
+# ---------------------- Command Handlers ----------------------
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text(
+        "*\U0001F4CD Reminder Setup *\U0001F4CD\n\nWhat should be the name of the appointment?",
+        parse_mode="markdown"
+    )
     return NAME
 
+def name(update: Update, context: CallbackContext):
+    appointment_name = update.message.text
+    if appointment_name == "/cancel":
+        return cancel(update, context)
+    chat_id = update.message.chat_id
+    json_editor(chat_id, "name", appointment_name)
 
-def name(update, context):
-    name = update.message.text
-    if name == "/cancel":
-        cancel(update, context)
-        return ConversationHandler.END
-    username = update.message["chat"]["id"]
-    json_editor(username, "name", name)
-    logger.info("Name: %s", update.message.text)
-    update.message.reply_text(f"\U0001F4C5* Reminder Setup *\U0001F4C5\n\nWhen do you want to be\nreminded for *{name}*?",
-                              reply_markup=telegramcalendar.create_calendar(), parse_mode="markdown")
+    update.message.reply_text(
+        f"\U0001F4C5 *Reminder Setup*\U0001F4C5\n\nWhen do you want to be reminded for *{appointment_name}*?",
+        parse_mode="markdown",
+        reply_markup=telegramcalendar.create_calendar()
+    )
     return DATE_Q
 
-
-def inline_handler(update, context):
+def inline_handler(update: Update, context: CallbackContext):
     selected, date = telegramcalendar.process_calendar_selection(context.bot, update)
     if selected:
-        json_editor(str(update.callback_query.from_user.id), "date", date.strftime("%d/%m/%Y"))
-        context.bot.send_message(chat_id=update.callback_query.from_user.id,
-                        text="You selected %s" % (date.strftime("%d/%m/%Y")),
-                        reply_markup=ReplyKeyboardRemove())
-        context.bot.send_message(chat_id=update.callback_query.from_user.id, text="\U0001F553* Reminder Setup *\U0001F553\n\nWhich *time* do you want\nto be reminded?", parse_mode="markdown", reply_markup=telegramcalendar.create_clock(user=update.callback_query.from_user.id))
+        chat_id = update.callback_query.from_user.id
+        json_editor(chat_id, "date", date.strftime("%d/%m/%Y"))
+        context.bot.send_message(chat_id=chat_id, text=f"You selected {date.strftime('%d/%m/%Y')}", reply_markup=ReplyKeyboardRemove())
+        context.bot.send_message(chat_id=chat_id,
+                                 text="\U0001F553 *Reminder Setup* \U0001F553\nWhich *time* do you want to be reminded?",
+                                 parse_mode="markdown",
+                                 reply_markup=telegramcalendar.create_clock(user=chat_id))
         return TIME_Q
 
-
-def inline_handler2(update, context):
+def inline_handler2(update: Update, context: CallbackContext):
     selected, _time = telegramcalendar.process_clock_selection(context.bot, update)
     if selected:
-        chat_id = str(update.callback_query.from_user.id)
+        chat_id = update.callback_query.from_user.id
         r_id = random.randint(0, 100000)
-        format_time = f"{_time[0]}:{_time[1]} {_time[2]}"
-        json_editor(chat_id, "time", format_time)
+        formatted_time = f"{_time[0]}:{_time[1]} {_time[2]}"
+        json_editor(chat_id, "time", formatted_time)
         json_editor(chat_id, "id", r_id)
 
-        context.bot.send_message(chat_id=update.callback_query.from_user.id,
-                                 text=f"You selected {format_time}",
-                                 reply_markup=ReplyKeyboardRemove())
+        context.bot.send_message(chat_id=chat_id, text=f"You selected {formatted_time}", reply_markup=ReplyKeyboardRemove())
         reply_keyboard = [["Yes", "No"]]
-        context.bot.send_message(chat_id=update.callback_query.from_user.id,
-                                text=f"\U0001F530 *Reminder Setup* \U0001F530\n\nDo you want to add an\ninformation to the reminder?",
-                                  reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True), parse_mode="markdown")
+        context.bot.send_message(chat_id=chat_id,
+                                 text="\U0001F530 *Reminder Setup* \U0001F530\nDo you want to add additional information to the reminder?",
+                                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+                                 parse_mode="markdown")
         return INFO
 
-
-def info(update, context):
+def info(update: Update, context: CallbackContext):
     text = update.message.text
-    if text == "Yes":
-        update.message.reply_text(f"\U00002139 *Reminder Setup* \U00002139\n\nSend the additional information\nyou want to be added to your reminder!", parse_mode="markdown")
+    chat_id = update.message.chat_id
+    if text.lower() == "yes":
+        update.message.reply_text("\U00002139 Send the additional information for your reminder:", parse_mode="markdown")
         return OPT
     else:
-        reply_keyboard = [["/start", "/list", "/time"]]
-        chat_id = str(update.message["chat"]["id"])
-        name, date, format_time, r_id = json_getter(chat_id)
-        num = json_utc(chat_id)
-        hour, minute, m = int(format_time.split(" ")[0].split(":")[0]), int(format_time.split(" ")[0].split(":")[1]), format_time.split(" ")[1]
+        return schedule_reminder(chat_id, context)
 
-        if "pm" in m:
-            n_hour = hour + 12
-        else:
-            n_hour = hour
+def opt_info(update: Update, context: CallbackContext):
+    chat_id = update.message.chat_id
+    information = update.message.text
+    json_editor(chat_id, "opt_inf", information)
+    return schedule_reminder(chat_id, context, info=information)
 
-        seconds = datetime.timestamp(datetime.strptime(date, "%d/%m/%Y") + timedelta(hours=n_hour, minutes=minute)) - (datetime.timestamp(datetime.now()) + (num * 3600))
-        print(seconds)
-        if seconds < 0:
-            context.bot.send_message(chat_id=chat_id, text=f"\U0000274C*Reminder Error*\U0000274C\n\nThe date and time you have requested is in the past.\nPlease choose a suitable date and time!", parse_mode="markdown", reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
-            json_deleter(chat_id, r_id=r_id)
-        else:
-            context.bot.send_message(chat_id=chat_id,
-                                     text=f"*\U0001F4CC Saved Reminder *\U0001F4CC\n\nAppointment: {name}\nDate: {date}\nTime: {hour}:{minute} {m}",
-                                     parse_mode="markdown",
-                                     reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True,
-                                                                      resize_keyboard=True))
-            context.job_queue.run_once(notification, seconds, context=[chat_id, name, date, format_time, chat_id, r_id], name=chat_id)
+def schedule_reminder(chat_id, context, info=None):
+    data = json_getter(chat_id)
+    if not data:
+        return ConversationHandler.END
+    name, date, time_str, r_id, _ = data
+    utc_offset = json_utc(chat_id)
+
+    hour, minute, ampm = parse_time(time_str)
+    reminder_dt = datetime.strptime(date, "%d/%m/%Y") + timedelta(hours=hour, minutes=minute)
+    reminder_dt -= timedelta(minutes=30)  # 30 minutes before
+    reminder_dt -= timedelta(hours=utc_offset)  # adjust UTC offset
+    seconds = (reminder_dt - datetime.now()).total_seconds()
+
+    reply_keyboard = [["/start", "/list", "/time"]]
+    if seconds < 0:
+        context.bot.send_message(chat_id=chat_id, text="\U0000274C *Reminder Error*\U0000274C\nThe date/time is too close or in the past.", parse_mode="markdown",
+                                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
+        json_deleter(chat_id, r_id=r_id)
         return ConversationHandler.END
 
+    context.bot.send_message(chat_id=chat_id,
+                             text=f"\U0001F4CC *Saved Reminder*\U0001F4CC\nAppointment: {name}\nDate: {date}\nTime: {time_str}",
+                             parse_mode="markdown",
+                             reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
+    job_context = [chat_id, name, date, time_str, chat_id, r_id]
+    if info:
+        job_context.append(info)
+    context.job_queue.run_once(notification, seconds, context=job_context, name=str(chat_id))
+    return ConversationHandler.END
 
-def opt_info(update, context):
+def parse_time(time_str):
+    """Return (hour24, minute, ampm)"""
+    parts = time_str.split()
+    hour, minute = map(int, parts[0].split(":"))
+    ampm = parts[1].lower()
+    if ampm == "pm" and hour != 12:
+        hour += 12
+    elif ampm == "am" and hour == 12:
+        hour = 0
+    return hour, minute, ampm
+
+def cancel(update: Update, context: CallbackContext):
+    chat_id = update.message.chat_id
+    json_deleter(chat_id, current=True)
+    update.message.reply_text("\U0001F53A *Reminder Setup*\U0001F53A\nYou canceled the reminder!", reply_markup=ReplyKeyboardRemove(), parse_mode="markdown")
+    return ConversationHandler.END
+
+def all_reminder(update: Update, context: CallbackContext):
+    chat_id = str(update.message.chat_id)
+    data = load_store()
+    reminders = data.get("reminder", {}).get(chat_id, {}).get("reminder", [])
     reply_keyboard = [["/start", "/list", "/time"]]
-    information = update.message.text
-    chat_id = str(update.message["chat"]["id"])
-    json_editor(chat_id, "opt_inf", information)
-    name, date, format_time, r_id = json_getter(chat_id)
-    num = json_utc(chat_id)
-    hour, minute, m = int(format_time.split(" ")[0].split(":")[0]), int(format_time.split(" ")[0].split(":")[1]), format_time.split(" ")[1]
+    if not reminders:
+        update.message.reply_text("📃 *Reminder List*\nYou don't have any reminders!", parse_mode="markdown", reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
+        return
+    update.message.reply_text("📋 *Reminder List*\n", parse_mode="markdown")
+    for i, r in enumerate(reminders):
+        msg = f"{i+1}: Appointment: {r['name']}\nDate: {r['date']}\nTime: {r['time']}"
+        if "opt_inf" in r:
+            msg += f"\nInformation: {r['opt_inf']}"
+        update.message.reply_text(msg)
 
-    if "pm" in m:
-        n_hour = hour + 12
-    else:
-        n_hour = hour
-
-    seconds = datetime.timestamp(datetime.strptime(date, "%d/%m/%Y") + timedelta(hours=n_hour, minutes=minute)) - (datetime.timestamp(datetime.now()) + (num * 3600))
-    print(seconds)
-    if seconds < 0:
-        context.bot.send_message(chat_id=chat_id, text=f"\U0000274C*Reminder Error*\U0000274C\n\nThe date and time you have requested is in the past.\nPlease choose a suitable date and time!", parse_mode="markdown", reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
-        json_deleter(chat_id, r_id=r_id)
-    else:
-        context.bot.send_message(chat_id=chat_id,
-                                 text=f"*\U0001F4CC Saved Reminder *\U0001F4CC\n\nAppointment: {name}\nDate: {date}\nTime: {hour}:{minute} {m}",
-                                 parse_mode="markdown",
-                                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True,
-                                                                  resize_keyboard=True))
-        context.job_queue.run_once(notification, seconds, context=[chat_id, name, date, format_time, chat_id, r_id, information], name=chat_id)
-    return ConversationHandler.END
-
-
-def cancel(update, context):
-    username = str(update.message["chat"]["id"])
-    logger.info("User %s canceled the reminder setup.", username)
-    json_deleter(username, current=True)
-    update.message.reply_text('\U0001F53A *Reminder Setup* \U0001F53A'
-                              '\n\nYou canceled the reminder!', reply_markup=ReplyKeyboardRemove(), parse_mode="markdown")
-    return ConversationHandler.END
-
-
-def main():
-    updater = Updater("TOKEN", use_context=True)
-
-    dp = updater.dispatcher
-
-    all_reminder_handler = CommandHandler("list", all_reminder)
-
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            NAME: [MessageHandler(Filters.text, name)],
-            DATE_Q: [CallbackQueryHandler(inline_handler)],
-            TIME_Q: [CallbackQueryHandler(inline_handler2)],
-            INFO: [MessageHandler(Filters.text, info)],
-            OPT: [MessageHandler(Filters.text, opt_info)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-    )
-
-    conv_handler_utc = ConversationHandler(
-        entry_points=[CommandHandler("time", utc_time)],
-        states={
-            UTC_1: [CallbackQueryHandler(utc_time_selector)]
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-
-    dp.add_handler(all_reminder_handler)
-
-    dp.add_handler(conv_handler)
-
-    dp.add_handler(conv_handler_utc)
-
-    updater.start_polling()
-    updater.idle()
-
-
-if __name__ == '__main__':
-
-    main()
-
-from telegram import Update
-from telegram.ext import CallbackContext, CommandHandler
-
+# ---------------------- Filter Commands ----------------------
 def setfilter(update: Update, context: CallbackContext):
     chat_id = str(update.effective_chat.id)
     if not context.args:
-        update.message.reply_text("Usage: /setfilter <text to match in event description>")
+        update.message.reply_text("Usage: /setfilter <text>")
         return
     keyword = " ".join(context.args).strip()
     data = load_store()
@@ -357,7 +260,7 @@ def setfilter(update: Update, context: CallbackContext):
     filters[chat_id] = keyword
     data["filters"] = filters
     save_store(data)
-    update.message.reply_text(f"Filter set to: \"{keyword}\" — only reminders with this text in the event description will be sent.")
+    update.message.reply_text(f"Filter set to: \"{keyword}\"")
 
 def clearfilter(update: Update, context: CallbackContext):
     chat_id = str(update.effective_chat.id)
@@ -367,17 +270,60 @@ def clearfilter(update: Update, context: CallbackContext):
         del filters[chat_id]
         data["filters"] = filters
         save_store(data)
-        update.message.reply_text("Filter cleared. All reminders will be sent as before.")
+        update.message.reply_text("Filter cleared.")
     else:
-        update.message.reply_text("No filter set for this chat.")
+        update.message.reply_text("No filter set.")
 
-dispatcher.add_handler(CommandHandler("setfilter", setfilter))
-dispatcher.add_handler(CommandHandler("clearfilter", clearfilter))
+# ---------------------- UTC Selection ----------------------
+def utc_time(update: Update, context: CallbackContext):
+    update.message.reply_text("Choose your timezone:", reply_markup=telegramcalendar.create_timezone())
+    return UTC_1
 
+def utc_time_selector(update: Update, context: CallbackContext):
+    selected, num = telegramcalendar.process_utc_selection(context.bot, update)
+    if selected:
+        chat_id = str(update.callback_query.from_user.id)
+        json_utc(chat_id, utc=num)
+        reply_keyboard = [["/start", "/list", "/time"]]
+        context.bot.send_message(chat_id=chat_id,
+                                 text=f"You selected UTC {'+' if num>=0 else '-'}{abs(num)}",
+                                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
+        return ConversationHandler.END
 
-import os
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
-# then pass TOKEN when creating the Updater
+# ---------------------- Main ----------------------
+def main():
+    TOKEN = os.environ.get("TELEGRAM_TOKEN")
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-export TELEGRAM_TOKEN="123456:ABC..."
-python bot.py
+    # Conversation handler for reminders
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            NAME: [MessageHandler(Filters.text & ~Filters.command, name)],
+            DATE_Q: [CallbackQueryHandler(inline_handler)],
+            TIME_Q: [CallbackQueryHandler(inline_handler2)],
+            INFO: [MessageHandler(Filters.text & ~Filters.command, info)],
+            OPT: [MessageHandler(Filters.text & ~Filters.command, opt_info)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    # UTC handler
+    conv_utc = ConversationHandler(
+        entry_points=[CommandHandler("time", utc_time)],
+        states={UTC_1: [CallbackQueryHandler(utc_time_selector)]},
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    dp.add_handler(conv_handler)
+    dp.add_handler(conv_utc)
+    dp.add_handler(CommandHandler("list", all_reminder))
+    dp.add_handler(CommandHandler("setfilter", setfilter))
+    dp.add_handler(CommandHandler("clearfilter", clearfilter))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == "__main__":
+    main()
