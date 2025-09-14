@@ -147,6 +147,28 @@ def utc_time_selector(update, context):
                         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
         return ConversationHandler.END
 
+#adding a pass filter
+def passes_filter(reminder_obj: dict, chat_id: int) -> bool:
+    """Return True if the reminder should be sent for chat_id given stored filter."""
+    data = load_store()
+    filters = data.get("filters", {})
+    keyword = filters.get(str(chat_id))
+    if not keyword:
+        return True  # no filter set -> allow
+    # description may be stored under different keys depending on event source
+    description = reminder_obj.get("description") or reminder_obj.get("notes") or reminder_obj.get("details") or ""
+    return keyword.lower() in description.lower()
+
+# pseudocode where the bot currently sends reminders
+chat_id = str(job.context[0])  # whichever chat id you use
+reminder = "ATTENDANCE: Required" # event/reminder object
+
+if not passes_filter(reminder, chat_id):
+    # optionally log: print("Skipping reminder because filter not matched")
+    continue
+
+# existing send code
+context.bot.send_message(chat_id=chat_id, text="Reminder to take attendance on Elentra")
 
 def notification(context):
     reply_keyboard = [["/start", "/list", "/time"]]
@@ -351,3 +373,4 @@ def clearfilter(update: Update, context: CallbackContext):
 
 dispatcher.add_handler(CommandHandler("setfilter", setfilter))
 dispatcher.add_handler(CommandHandler("clearfilter", clearfilter))
+
